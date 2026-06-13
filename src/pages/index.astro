@@ -57,7 +57,7 @@ const phaseColors: Record<number, string> = {
                 const day = allDays.find(d => d.data.day === n);
                 return (
                   <a
-                    href={built ? `/day/${n}` : undefined}
+                    href={built ? `/days/${n}` : undefined}
                     class={built ? 'day-card built' : 'day-card'}
                   >
                     <div class="day-num" style={built ? `color:${color}` : ''}>Day {n}</div>

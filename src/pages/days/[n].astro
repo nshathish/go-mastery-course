@@ -79,7 +79,7 @@ const nextDay = allDays.find(d => d.data.day === Number(n) + 1);
         <div style="display:flex;flex-direction:column;gap:8px;">
           {extras.map(async extra => {
             return (
-              <a href={`/extra/${extra.id.replace(/\.mdx?$/, '')}`} class="extra-card">
+              <a href={`/extras/${extra.id.replace(/\.mdx?$/, '')}`} class="extra-card">
                 <div style="font-size:14px;font-weight:500;color:var(--text);margin-bottom:3px;">{extra.data.title}</div>
                 <div style="font-size:13px;color:var(--muted);">{extra.data.description}</div>
               </a>
@@ -92,13 +92,13 @@ const nextDay = allDays.find(d => d.data.day === Number(n) + 1);
     <!-- Day nav -->
     <div style="display:flex;justify-content:space-between;margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border2);">
       {prevDay ? (
-        <a href={`/day/${prevDay.data.day}`} class="day-nav">
+        <a href={`/days/${prevDay.data.day}`} class="day-nav">
           <span class="day-nav-label">← Day {prevDay.data.day}</span>
           <span>{prevDay.data.title}</span>
         </a>
       ) : <span/>}
       {nextDay ? (
-        <a href={`/day/${nextDay.data.day}`} class="day-nav" style="text-align:right;">
+        <a href={`/days/${nextDay.data.day}`} class="day-nav" style="text-align:right;">
           <span class="day-nav-label">Day {nextDay.data.day} →</span>
           <span>{nextDay.data.title}</span>
         </a>

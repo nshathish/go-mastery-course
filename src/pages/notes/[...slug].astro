@@ -1,0 +1,57 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+
+export async function getStaticPaths() {
+  const notes = await getCollection('notes');
+  return notes.map(entry => ({
+    params: { slug: entry.id.replace(/\.mdx?$/, '') },
+  }));
+}
+
+const { slug } = Astro.params;
+const allNotes = await getCollection('notes');
+const entry = allNotes.find(e => e.id.replace(/\.mdx?$/, '') === slug)!;
+const { Content } = await render(entry);
+---
+<Base title={entry.data.title}>
+  <main style="max-width:780px;margin:0 auto;padding:2.5rem 1.5rem;">
+
+    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--subtle);margin-bottom:2rem;font-family:var(--mono);">
+      <a href="/" class="bc-link">schedule</a>
+      <span>/</span>
+      <span>notes</span>
+    </div>
+
+    <div style="margin-bottom:2.5rem;">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--subtle);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.5rem;">note</div>
+      <h1 style="font-size:clamp(1.5rem,4vw,2.25rem);font-weight:500;letter-spacing:-.02em;line-height:1.2;margin-bottom:1rem;">{entry.data.title}</h1>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        {entry.data.tags.map((t: string) => (
+          <span style="font-size:11px;font-family:var(--mono);padding:3px 10px;border-radius:100px;background:var(--surface2);color:var(--subtle);border:1px solid var(--border2);">{t}</span>
+        ))}
+      </div>
+    </div>
+
+    <article class="prose">
+      <Content />
+    </article>
+
+    {entry.data.relatedDays && entry.data.relatedDays.length > 0 && (
+      <div style="margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border2);">
+        <div style="font-size:12px;color:var(--subtle);font-family:var(--mono);margin-bottom:.75rem;">related days</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          {entry.data.relatedDays.map((d: number) => (
+            <a href={`/day/${d}`} style="font-size:13px;color:var(--go-blue);text-decoration:underline;text-underline-offset:3px;">Day {d}</a>
+          ))}
+        </div>
+      </div>
+    )}
+
+  </main>
+</Base>
+
+<style>
+    .bc-link { color:var(--muted); transition:color .15s; }
+    .bc-link:hover { color:var(--text); }
+</style>
