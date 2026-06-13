@@ -1,17 +1,10 @@
 ---
 import Base from '../layouts/Base.astro';
 import { getCollection } from 'astro:content';
+import { phases, schedule } from '../data/schedule';
 
 const allDays = await getCollection('days');
 const builtDayNums = new Set(allDays.map(d => d.data.day));
-
-const phases = [
-  { id: 1, name: "Intermediate foundations",        days: [1,  14] },
-  { id: 2, name: "Advanced concurrency & internals",days: [15, 28] },
-  { id: 3, name: "Systems & performance",           days: [29, 42] },
-  { id: 4, name: "Expert patterns & architecture",  days: [43, 56] },
-  { id: 5, name: "Capstone & mastery",              days: [57, 60] },
-];
 
 const phaseColors: Record<number, string> = {
   1: '#007a99', 2: '#534ab7', 3: '#0f6e56', 4: '#993c1d', 5: '#854f0b',
@@ -54,17 +47,15 @@ const phaseColors: Record<number, string> = {
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:8px;">
               {nums.map(n => {
                 const built = builtDayNums.has(n);
-                const day = allDays.find(d => d.data.day === n);
+                const day = schedule[n];
                 return (
                   <a
                     href={built ? `/days/${n}` : undefined}
                     class={built ? 'day-card built' : 'day-card'}
                   >
                     <div class="day-num" style={built ? `color:${color}` : ''}>Day {n}</div>
-                    <div class="day-title">{day ? day.data.title : '—'}</div>
-                    {day && (
-                      <div class="day-sub">{day.data.concepts.slice(0,2).join(', ')}</div>
-                    )}
+                    <div class="day-title">{day?.title ?? '—'}</div>
+                    <div class="day-sub">{day?.concepts.slice(0,2).join(', ') ?? ''}</div>
                   </a>
                 );
               })}
