@@ -50,7 +50,7 @@ const parentDay = allDays.find(d => d.data.day === entry.data.day);
     <!-- Back -->
     {parentDay && (
       <div style="margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border2);">
-        <a href={`/day/${parentDay.data.day}`} class="back-link">
+        <a href={`/days/${parentDay.data.day}`} class="back-link">
           ← Back to Day {parentDay.data.day}: {parentDay.data.title}
         </a>
       </div>
