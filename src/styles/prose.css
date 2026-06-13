@@ -12,3 +12,5 @@
 .prose em { font-style:italic; }
 .prose blockquote { border-left:2px solid var(--border); padding:.75rem 1rem; margin:1rem 0; border-radius:0 var(--radius) var(--radius) 0; background:var(--surface2); }
 .prose blockquote p { margin:0; font-size:13px; color:var(--muted); }
+.prose a { color:var(--go-blue); text-decoration:underline; text-underline-offset:3px; }
+.prose a:hover { color:var(--go-dark); }

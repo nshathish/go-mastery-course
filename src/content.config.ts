@@ -21,4 +21,13 @@ const extras = defineCollection({
   }),
 });
 
-export const collections = { days, extras };
+const notes = defineCollection({
+  loader: glob({ pattern: '**/*.{md,mdx}', base: './src/content/notes' }),
+  schema: z.object({
+    title: z.string(),
+    tags: z.array(z.string()),
+    relatedDays: z.array(z.number()).optional(),
+  }),
+});
+
+export const collections = { days, extras, notes };

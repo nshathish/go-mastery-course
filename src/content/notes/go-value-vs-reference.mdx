@@ -1,0 +1,76 @@
+---
+title: "Go is value-based by default"
+tags: ["memory", "values", "pointers", "slices", "maps"]
+relatedDays: [1, 2, 7]
+---
+
+Go copies values by default. When you assign a variable, pass it to a function, or put it in a struct, the original is unaffected.
+
+```go
+a := 42
+b := a   // b is a copy
+b = 99
+fmt.Println(a) // 42 — unchanged
+```
+
+The same applies to structs:
+
+```go
+type Point struct { X, Y int }
+
+p1 := Point{1, 2}
+p2 := p1       // full copy of the struct
+p2.X = 99
+fmt.Println(p1.X) // 1 — unchanged
+```
+
+## The three exceptions
+
+These behave reference-like even without explicit pointers.
+
+### Slices
+
+A slice is a struct containing a pointer to an underlying array, a length, and a capacity. Assigning a slice copies that descriptor, but both copies point to the same array.
+
+```go
+a := []int{1, 2, 3}
+b := a
+b[0] = 99
+fmt.Println(a[0]) // 99 — same underlying array
+```
+
+### Maps
+
+Always reference the same underlying hash table. Assigning a map copies the reference.
+
+```go
+m1 := map[string]int{"x": 1}
+m2 := m1
+m2["x"] = 99
+fmt.Println(m1["x"]) // 99
+```
+
+### Channels
+
+Also reference types under the hood — assigning a channel copies the reference to the same underlying data structure.
+
+## The practical rule
+
+If you want a function to mutate something, you need an explicit pointer. If you don't use pointers, you're working with copies and the caller's data is safe.
+
+```go
+func double(n int) {
+    n *= 2  // modifies the copy only
+}
+
+func doublePtr(n *int) {
+    *n *= 2  // modifies the original
+}
+
+x := 5
+double(x)
+fmt.Println(x) // 5
+
+doublePtr(&x)
+fmt.Println(x) // 10
+```

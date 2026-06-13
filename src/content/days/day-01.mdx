@@ -51,7 +51,7 @@ var w Writer = &Buffer{}  // ok
 var w Writer = Buffer{}   // compile error!
 ```
 
-> **Gotcha:** If your method mutates the receiver, use a pointer receiver. If it only reads, a value receiver is fine. Be consistent within a type.
+> **Gotcha:** If your method mutates the receiver, use a pointer receiver. If it only reads, a value receiver is fine. Be consistent within a type. See [Go is value-based by default](/notes/go-value-vs-reference).
 
 ---
 
