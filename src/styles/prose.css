@@ -1,0 +1,14 @@
+.prose { line-height:1.75; color:var(--text); }
+.prose h2 { font-size:1.2rem; font-weight:500; margin:2.5rem 0 1rem; padding-bottom:.5rem; border-bottom:1px solid var(--border2); color:var(--text); letter-spacing:-.01em; }
+.prose h3 { font-size:1rem; font-weight:500; margin:2rem 0 .5rem; color:var(--text); }
+.prose p { margin-bottom:1rem; color:var(--muted); font-size:15px; }
+.prose ul, .prose ol { margin:0 0 1rem 1.25rem; color:var(--muted); font-size:15px; }
+.prose li { margin-bottom:.35rem; line-height:1.6; }
+.prose code { font-family:var(--mono); font-size:13px; background:var(--surface2); padding:1px 6px; border-radius:4px; color:var(--text); }
+.prose pre { border:1px solid var(--border2); border-radius:var(--radius-lg); overflow-x:auto; margin:1rem 0 1.5rem; line-height:1.8; }
+.prose pre code { background:none; padding:0; font-size:13px; line-height:1.8; display:block; }
+.prose hr { border:none; border-top:1px solid var(--border2); margin:2rem 0; }
+.prose strong { font-weight:500; color:var(--text); }
+.prose em { font-style:italic; }
+.prose blockquote { border-left:2px solid var(--border); padding:.75rem 1rem; margin:1rem 0; border-radius:0 var(--radius) var(--radius) 0; background:var(--surface2); }
+.prose blockquote p { margin:0; font-size:13px; color:var(--muted); }

@@ -1,0 +1,267 @@
+---
+day: 2
+title: "Error handling deep dive"
+subtitle: "Custom errors, wrapping, sentinel errors, errors.Is/As, panic/recover"
+phase: 1
+concepts: ["custom error types", "%w wrapping", "errors.Is / errors.As", "sentinel errors", "panic / recover", "error hierarchy"]
+---
+
+## The error interface & custom types
+
+The built-in `error` interface has one method. Any type that implements it is an error.
+
+```go
+type error interface {
+    Error() string
+}
+
+type ValidationError struct {
+    Field   string
+    Value   any
+    Message string
+}
+
+func (e *ValidationError) Error() string {
+    return fmt.Sprintf("validation failed on %s=%v: %s",
+        e.Field, e.Value, e.Message)
+}
+
+func validateAge(age int) error {
+    if age < 0 {
+        return &ValidationError{
+            Field: "age", Value: age,
+            Message: "must be non-negative",
+        }
+    }
+    return nil
+}
+```
+
+> **Note:** Always use a pointer receiver on custom error types. A value-receiver error can be tricky to compare with `errors.As` and may copy data unexpectedly.
+
+---
+
+## Error wrapping with %w
+
+Wrap errors as they bubble up to add context without losing the original. Go 1.13+.
+
+```go
+// WITHOUT wrapping — caller sees nothing useful
+func readConfig(path string) error {
+    _, err := os.Open(path)
+    if err != nil { return err }
+    return nil
+}
+
+// WITH wrapping — chain of context preserved
+func readConfig(path string) error {
+    _, err := os.Open(path)
+    if err != nil {
+        return fmt.Errorf("readConfig: open %s: %w", path, err)
+    }
+    return nil
+}
+
+func loadApp() error {
+    if err := readConfig("/etc/app.conf"); err != nil {
+        return fmt.Errorf("loadApp: %w", err)
+    }
+    return nil
+}
+
+// Result: "loadApp: readConfig: open /etc/app.conf: no such file or directory"
+```
+
+> **Note:** `%w` wraps — the original is stored inside and reachable via `errors.Unwrap`. `%v` formats — the original is lost. Use `%w` unless you deliberately want to hide the original.
+
+> **Gotcha:** Don't wrap at every single call site — only at meaningful boundaries (package edges, external calls). Over-wrapping makes the chain noisy.
+
+---
+
+## errors.Is and errors.As
+
+How to inspect a wrapped error chain — the right way to check for specific errors.
+
+```go
+// errors.Is — checks value identity through the chain
+var ErrNotFound = errors.New("not found")
+
+err := fmt.Errorf("findUser: %w", ErrNotFound)
+errors.Is(err, ErrNotFound)  // true — unwraps chain
+err == ErrNotFound           // false — surface only
+
+// errors.As — checks type through the chain
+type DBError struct { Code int; Query string }
+func (e *DBError) Error() string {
+    return fmt.Sprintf("db error %d", e.Code)
+}
+
+var dbErr *DBError
+if errors.As(runQuery(), &dbErr) {
+    fmt.Println(dbErr.Code)   // 1045
+    fmt.Println(dbErr.Query)  // "SELECT ..."
+}
+```
+
+> **Gotcha:** Never use type assertions (`err.(*DBError)`) on wrapped errors — this only checks the outermost error and misses everything wrapped inside.
+
+---
+
+## Sentinel errors
+
+Package-level error variables used as well-known signals. `io.EOF` is the classic example.
+
+```go
+var (
+    ErrNotFound     = errors.New("not found")
+    ErrUnauthorized = errors.New("unauthorized")
+    ErrRateLimited  = errors.New("rate limited")
+)
+
+// Custom Is() for semantic matching (match on content, not pointer)
+type HTTPError struct { StatusCode int; Message string }
+func (e *HTTPError) Error() string { return e.Message }
+
+func (e *HTTPError) Is(target error) bool {
+    t, ok := target.(*HTTPError)
+    if !ok { return false }
+    return e.StatusCode == t.StatusCode
+}
+
+err := &HTTPError{StatusCode: 404, Message: "not found"}
+errors.Is(err, &HTTPError{StatusCode: 404})  // true
+```
+
+> **Gotcha:** Sentinel errors create a public API contract. Once exported, you can never change their message string without potentially breaking callers.
+
+> **Good:** Name sentinels with the `Err` prefix (`ErrNotFound`, not `NotFoundError`). Strong Go convention, makes grep-ability excellent.
+
+---
+
+## panic and recover
+
+`panic` is not for errors. It signals programmer mistakes or truly unrecoverable states.
+
+```go
+// panic: for conditions that should NEVER happen in correct code
+func mustPositive(n int) int {
+    if n <= 0 {
+        panic(fmt.Sprintf("mustPositive: got %d", n))
+    }
+    return n
+}
+
+// recover: ONLY useful inside a deferred function
+func safeExecute(fn func()) (err error) {
+    defer func() {
+        if r := recover(); r != nil {
+            err = fmt.Errorf("panic recovered: %v", r)
+        }
+    }()
+    fn()
+    return nil
+}
+
+// Real pattern: HTTP middleware recovers panics at the boundary
+func panicMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        defer func() {
+            if rcv := recover(); rcv != nil {
+                log.Printf("panic: %v\n%s", rcv, debug.Stack())
+                http.Error(w, "internal server error", 500)
+            }
+        }()
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+> **Gotcha:** Never use `recover` to swallow panics silently. Always log the stack trace (`debug.Stack()`) and convert to an error or re-panic.
+
+---
+
+## Building an error hierarchy
+
+Real services need structured errors with codes, context, and retryability.
+
+```go
+type ErrorCode string
+
+const (
+    CodeNotFound     ErrorCode = "NOT_FOUND"
+    CodeUnauthorized ErrorCode = "UNAUTHORIZED"
+    CodeInternal     ErrorCode = "INTERNAL"
+)
+
+type AppError struct {
+    Code      ErrorCode
+    Message   string
+    Err       error
+    Retryable bool
+}
+
+func (e *AppError) Error() string {
+    return fmt.Sprintf("[%s] %s: %v", e.Code, e.Message, e.Err)
+}
+func (e *AppError) Unwrap() error { return e.Err }
+
+// HTTP handler maps codes to status codes cleanly
+func httpStatus(err error) int {
+    var ae *AppError
+    if !errors.As(err, &ae) { return 500 }
+    switch ae.Code {
+    case CodeNotFound:     return 404
+    case CodeUnauthorized: return 401
+    default:               return 500
+    }
+}
+```
+
+> **Good:** Implement `Unwrap() error` manually when wrapping in a struct field — `%w` only works inside `fmt.Errorf`. Without `Unwrap()`, `errors.Is` and `errors.As` can't see inside your struct.
+
+---
+
+## Tasks
+
+### 1. Validated config loader `medium`
+
+Build a multi-step config loader that reads from a file, parses fields, and validates them. Every layer wraps errors with context, and callers use `errors.Is` / `errors.As` to branch on specific failures.
+
+**Concepts:** custom error types · %w wrapping · errors.Is / errors.As · sentinel errors
+
+- Define sentinel errors: `ErrConfigNotFound`, `ErrConfigInvalid`
+- Define a `FieldError` struct carrying field name, bad value, and reason — implement `Unwrap()` so it wraps `ErrConfigInvalid`
+- Write `loadFile`, `parseConfig`, and `validateConfig` — each wraps the error from the layer below with `fmt.Errorf`
+- In `main`, use `errors.Is` to detect missing file and `errors.As` to extract `*FieldError` and print the bad field name
+- Verify: bare `==` fails to match through the chain but `errors.Is` succeeds — demonstrate both in a test
+- Print the full error chain on failure — it should read like a breadcrumb path
+
+---
+
+### 2. HTTP client with retry `medium`
+
+Write an HTTP client wrapper that retries on transient errors, stops immediately on permanent ones, and exposes a structured error type callers can inspect.
+
+**Concepts:** custom error types · errors.Is (custom Is()) · sentinel errors · error hierarchy
+
+- Define an `HTTPError` struct with `StatusCode`, `URL`, and `Retryable bool`
+- Implement a custom `Is(target error) bool` that matches on `StatusCode`
+- Define sentinel families: `ErrRateLimited` (429), `ErrUnauthorized` (401), `ErrServerError` (5xx)
+- Write `Get(url string, maxRetries int) ([]byte, error)` that retries only when `Retryable` is true
+- After exhausting retries, return a final error wrapping all attempt errors — callers can still `errors.As` through
+- Write tests using `net/http/httptest` that returns 429 three times then 200 — verify retry count and final success
+
+---
+
+### 3. Safe job runner `complex`
+
+Build a concurrent job runner that executes tasks in goroutines, recovers from panics, collects all errors, and surfaces them through a structured `AppError` hierarchy.
+
+**Concepts:** error hierarchy · %w wrapping · errors.Is / errors.As · panic / recover · sentinel errors
+
+- Define `AppError` with `ErrorCode`, `Message`, `Retryable bool`, and `Unwrap()` — with constructors `Internal()`, `Timeout()`, `InvalidInput()`
+- Define a `MultiError` type holding a slice of errors with `Unwrap() []error` (Go 1.20+ multi-unwrap)
+- Write `RunJobs(jobs []Job) error` — runs each job in a goroutine, wraps panics in `Internal` with stack trace
+- A `recover()` guard inside each goroutine must convert panics to `AppError{Code: CodeInternal}`
+- Caller uses `errors.As` on the returned `MultiError` to find all `*AppErrors` and count how many are retryable
+- Write a test where 3 of 5 jobs panic, 1 returns `Timeout`, 1 succeeds — assert `MultiError` contains exactly 4 errors

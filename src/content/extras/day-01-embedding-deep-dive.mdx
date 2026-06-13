@@ -1,0 +1,228 @@
+---
+day: 1
+title: "Struct embedding — deep dive"
+description: "Shadowing, pointer vs value embedding, the diamond problem, embedding interfaces, JSON tags, and real-world patterns."
+---
+
+## Shadowing — overriding promoted methods
+
+When the outer struct defines a method with the same name as an embedded one, the outer method wins.
+
+```go
+type Base struct{}
+func (b Base) Describe() string { return "I am Base" }
+func (b Base) Name()     string { return "Base" }
+
+type Child struct{ Base }
+
+// Shadow Describe — Child's version wins on Child values
+func (c Child) Describe() string { return "I am Child" }
+
+c := Child{}
+c.Describe()       // "I am Child"  — shadowed
+c.Name()           // "Base"        — promoted, not shadowed
+c.Base.Describe()  // "I am Base"   — explicit access still works
+
+// The shadowing does NOT affect interface satisfaction
+type Describer interface{ Describe() string }
+
+var d Describer = Child{}
+d.Describe()  // "I am Child" — Child's method satisfies the interface
+
+var b Describer = Base{}
+b.Describe()  // "I am Base"
+```
+
+> **Note:** This is the Go idiom for decorator/override patterns. Embed the base type, reimplement only the methods you want to change, and call `c.Base.Method()` to explicitly reach the original — equivalent to `super()` in other languages.
+
+> **Gotcha:** Shadowing only applies to the exact outer type. There is no virtual dispatch — the method set is resolved at the type, not at runtime.
+
+---
+
+## Pointer vs value embedding
+
+Embedding `*T` (pointer) vs `T` (value) has different implications for mutability, nil safety, and interface satisfaction.
+
+```go
+type Engine struct{ Running bool }
+func (e *Engine) Start()          { e.Running = true }
+func (e  Engine) Status() string {
+    if e.Running { return "on" }; return "off"
+}
+
+// Value embedding — Engine is copied into CarV
+type CarV struct{ Engine }
+
+cv := CarV{}
+cv.Start()               // ok — Go auto-takes &cv.Engine
+fmt.Println(cv.Status()) // "on"
+
+// Pointer embedding — Engine lives elsewhere, CarP holds a pointer
+type CarP struct{ *Engine }
+
+shared := &Engine{}
+c1 := CarP{Engine: shared}
+c2 := CarP{Engine: shared}  // both share the same Engine
+
+c1.Start()
+fmt.Println(c2.Status())  // "on" — mutation visible through c2!
+
+// Nil pointer embedding danger
+var c3 CarP    // Engine pointer is nil
+c3.Status()   // PANIC: nil pointer dereference
+```
+
+> **Good:** Use pointer embedding when the embedded type is large (avoid copies), when multiple outer structs need to share one instance, or when the embedded type contains a `sync.Mutex` (which must never be copied).
+
+---
+
+## The diamond problem — name collision
+
+When two embedded types both promote a method with the same name, Go refuses to promote either.
+
+```go
+type Logger  struct{}
+type Auditor struct{}
+
+func (Logger)  Log(msg string) { fmt.Println("LOG:", msg) }
+func (Auditor) Log(msg string) { fmt.Println("AUDIT:", msg) }
+
+type Service struct{ Logger; Auditor }
+
+s := Service{}
+s.Log("hello")         // COMPILE ERROR: ambiguous selector s.Log
+s.Logger.Log("hello")  // ok — explicit
+s.Auditor.Log("hello") // ok — explicit
+
+// Fix: shadow with an outer method that resolves the ambiguity
+func (s Service) Log(msg string) {
+    s.Logger.Log(msg)
+    s.Auditor.Log(msg)
+}
+
+// Interface satisfaction with collision
+type Logable interface{ Log(string) }
+var _ Logable = Service{}  // compile error without the outer Log method!
+```
+
+> **Gotcha:** The collision prevents interface satisfaction too — `Service` does NOT satisfy `Logable` unless you add the outer `Log` method. Depth wins over breadth: a direct field always beats an embedded one at the same depth.
+
+---
+
+## Embedding interfaces inside structs
+
+You can embed an interface type in a struct. Used for mocking, decoration, and forward-compatible API design.
+
+```go
+type Store interface {
+    Get(key string) string
+    Set(key, val string)
+    Delete(key string)
+}
+
+// Override only the method you care about in a test
+type GetOnlyStore struct {
+    Store  // satisfies all of Store via promotion
+    getFunc func(string) string
+}
+func (s GetOnlyStore) Get(key string) string {
+    return s.getFunc(key)
+}
+
+mock := GetOnlyStore{getFunc: func(k string) string { return "mocked" }}
+mock.Get("x")      // "mocked"
+mock.Set("x", "y") // PANIC — nil embedded interface
+
+// Forward-compatible decorator
+type CachedStore struct {
+    Store
+    cache map[string]string
+}
+func (c *CachedStore) Get(key string) string {
+    if v, ok := c.cache[key]; ok { return v }
+    v := c.Store.Get(key)
+    c.cache[key] = v
+    return v
+}
+// Set and Delete delegate automatically to c.Store
+```
+
+> **Gotcha:** Any call to an unoverridden method on a nil embedded interface panics at runtime, not compile time.
+
+> **Good:** The `CachedStore` pattern is used extensively in Go's stdlib — `http.ResponseWriter` wrappers, `io.Reader` decorators, and test helpers all follow this exact shape.
+
+---
+
+## Embedding and JSON / struct tags
+
+Embedded struct fields are promoted to the outer struct's JSON representation — including their tags.
+
+```go
+type Timestamps struct {
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
+}
+
+type User struct {
+    ID   int    `json:"id"`
+    Name string `json:"name"`
+    Timestamps   // promoted: created_at and updated_at at top level
+}
+// {"id":1,"name":"Alice","created_at":"...","updated_at":"..."}
+
+// Named field = nesting instead
+type UserNested struct {
+    ID         int        `json:"id"`
+    Timestamps Timestamps `json:"timestamps"`
+}
+// {"id":1,"timestamps":{"created_at":"...","updated_at":"..."}}
+
+// Silent collision — the nastiest bug
+type A struct{ Name string `json:"name"` }
+type B struct{ Name string `json:"name"` }
+type C struct{ A; B }
+// encoding/json silently drops BOTH "name" fields — no error!
+```
+
+> **Gotcha:** The silent JSON collision is one of the nastiest bugs in Go. The field just vanishes from output with no error anywhere. Always test JSON output shapes when using multi-embedding.
+
+---
+
+## Real-world patterns
+
+Three patterns from production Go code that use embedding in non-obvious ways.
+
+```go
+// Pattern 1: sync.Mutex embedding
+type SafeMap struct {
+    sync.RWMutex              // Lock/RLock promoted to SafeMap
+    data map[string]string
+}
+m := &SafeMap{data: make(map[string]string)}
+m.Lock(); m.data["k"] = "v"; m.Unlock()
+// NEVER copy SafeMap by value — go vet catches this with copylocks analyser
+
+// Pattern 2: http.ResponseWriter spy
+type StatusRecorder struct {
+    http.ResponseWriter
+    Status int
+}
+func (r *StatusRecorder) WriteHeader(code int) {
+    r.Status = code
+    r.ResponseWriter.WriteHeader(code)
+}
+// Captures status code in middleware — you built this in Day 1 Task 3
+
+// Pattern 3: optional capability detection
+type Flusher interface{ Flush() }
+
+func tryFlush(w http.ResponseWriter) {
+    if f, ok := w.(Flusher); ok {
+        f.Flush()
+    }
+}
+// http.Flusher, http.Hijacker follow this pattern —
+// optional capabilities expressed as small interfaces
+```
+
+> **Gotcha:** `sync.Mutex` (and anything containing one) must never be copied after first use. Embedding a mutex is idiomatic, but the containing struct must always be used via pointer.

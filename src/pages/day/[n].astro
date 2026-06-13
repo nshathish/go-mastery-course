@@ -1,0 +1,132 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getCollection, render } from 'astro:content';
+
+export async function getStaticPaths() {
+  const days = await getCollection('days');
+  return days.map(entry => ({ params: { n: String(entry.data.day) } }));
+}
+
+const { n } = Astro.params;
+const allDays = await getCollection('days');
+const entry = allDays.find(d => d.data.day === Number(n))!;
+const { Content } = await render(entry);
+
+const allExtras = await getCollection('extras');
+const extras = allExtras
+  .filter(e => e.data.day === Number(n))
+  .sort((a, b) => a.id.localeCompare(b.id));
+
+const phases = [
+  { id: 1, name: "Intermediate foundations",         days: [1,  14] },
+  { id: 2, name: "Advanced concurrency & internals", days: [15, 28] },
+  { id: 3, name: "Systems & performance",            days: [29, 42] },
+  { id: 4, name: "Expert patterns & architecture",   days: [43, 56] },
+  { id: 5, name: "Capstone & mastery",               days: [57, 60] },
+];
+const phase = phases.find(p => Number(n) >= p.days[0] && Number(n) <= p.days[1])!;
+
+const phaseColors: Record<number, string> = {
+  1: '#007a99', 2: '#534ab7', 3: '#0f6e56', 4: '#993c1d', 5: '#854f0b',
+};
+const color = phaseColors[phase.id];
+
+const prevDay = allDays.find(d => d.data.day === Number(n) - 1);
+const nextDay = allDays.find(d => d.data.day === Number(n) + 1);
+---
+<Base title={`Day ${n}: ${entry.data.title}`}>
+  <main style="max-width:780px;margin:0 auto;padding:2.5rem 1.5rem;">
+
+    <!-- Breadcrumb -->
+    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--subtle);margin-bottom:2rem;font-family:var(--mono);">
+      <a href="/" class="bc-link">schedule</a>
+      <span>/</span>
+      <span style={`color:${color}`}>phase {phase.id}</span>
+      <span>/</span>
+      <span>day {n}</span>
+    </div>
+
+    <!-- Header -->
+    <div style="margin-bottom:2.5rem;">
+      <div style={`font-family:var(--mono);font-size:11px;font-weight:500;color:${color};letter-spacing:.08em;text-transform:uppercase;margin-bottom:.5rem;`}>
+        Day {n} · {phase.name}
+      </div>
+      <h1 style="font-size:clamp(1.5rem,4vw,2.25rem);font-weight:500;letter-spacing:-.02em;line-height:1.2;margin-bottom:.6rem;">
+        {entry.data.title}
+      </h1>
+      <p style="color:var(--muted);font-size:15px;margin-bottom:1.25rem;">{entry.data.subtitle}</p>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        {entry.data.concepts.map((c: string) => (
+          <span style={`font-size:11px;font-family:var(--mono);padding:3px 10px;border-radius:100px;background:${color}12;color:${color};border:1px solid ${color}33;`}>
+            {c}
+          </span>
+        ))}
+      </div>
+    </div>
+
+    <!-- Main content -->
+    <article class="prose">
+      <Content />
+    </article>
+
+    <!-- Extras -->
+    {extras.length > 0 && (
+      <section style="margin-top:3rem;">
+        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem;">
+          <h2 style="font-size:13px;font-weight:500;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;font-family:var(--mono);">Deep dives</h2>
+          <div style="flex:1;height:1px;background:var(--border2);"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          {extras.map(async extra => {
+            return (
+              <a href={`/extra/${extra.id.replace(/\.mdx?$/, '')}`} class="extra-card">
+                <div style="font-size:14px;font-weight:500;color:var(--text);margin-bottom:3px;">{extra.data.title}</div>
+                <div style="font-size:13px;color:var(--muted);">{extra.data.description}</div>
+              </a>
+            );
+          })}
+        </div>
+      </section>
+    )}
+
+    <!-- Day nav -->
+    <div style="display:flex;justify-content:space-between;margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border2);">
+      {prevDay ? (
+        <a href={`/day/${prevDay.data.day}`} class="day-nav">
+          <span class="day-nav-label">← Day {prevDay.data.day}</span>
+          <span>{prevDay.data.title}</span>
+        </a>
+      ) : <span/>}
+      {nextDay ? (
+        <a href={`/day/${nextDay.data.day}`} class="day-nav" style="text-align:right;">
+          <span class="day-nav-label">Day {nextDay.data.day} →</span>
+          <span>{nextDay.data.title}</span>
+        </a>
+      ) : <span/>}
+    </div>
+
+  </main>
+</Base>
+
+<style>
+.bc-link { color:var(--muted); transition:color .15s; }
+.bc-link:hover { color:var(--text); }
+
+.extra-card {
+  display:block;
+  background:var(--surface);
+  border:1px solid var(--border2);
+  border-radius:var(--radius);
+  padding:12px 16px;
+  text-decoration:none;
+  transition:border-color .15s, background .15s;
+}
+.extra-card:hover { border-color:var(--border); background:var(--surface2); }
+
+.day-nav { display:flex; flex-direction:column; gap:2px; text-decoration:none; color:var(--muted); font-size:13px; transition:color .15s; }
+.day-nav:hover { color:var(--text); }
+.day-nav-label { font-family:var(--mono); font-size:11px; color:var(--subtle); }
+
+
+/* Callout variants via blockquote first-word */
+</style>

@@ -1,0 +1,67 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getCollection, render } from 'astro:content';
+
+export async function getStaticPaths() {
+  const extras = await getCollection('extras');
+  return extras.map(entry => ({
+    params: { slug: entry.id.replace(/\.mdx?$/, '') },
+  }));
+}
+
+const { slug } = Astro.params;
+const allExtras = await getCollection('extras');
+const entry = allExtras.find(e => e.id.replace(/\.mdx?$/, '') === slug)!;
+const { Content } = await render(entry);
+
+const allDays = await getCollection('days');
+const parentDay = allDays.find(d => d.data.day === entry.data.day);
+---
+<Base title={entry.data.title}>
+  <main style="max-width:780px;margin:0 auto;padding:2.5rem 1.5rem;">
+
+    <!-- Breadcrumb -->
+    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--subtle);margin-bottom:2rem;font-family:var(--mono);">
+      <a href="/" class="bc-link">schedule</a>
+      <span>/</span>
+      {parentDay && <a href={`/day/${parentDay.data.day}`} class="bc-link">day {parentDay.data.day}</a>}
+      {parentDay && <span>/</span>}
+      <span>deep dive</span>
+    </div>
+
+    <!-- Header -->
+    <div style="margin-bottom:2.5rem;">
+      {parentDay && (
+        <div style="font-family:var(--mono);font-size:11px;color:var(--subtle);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.5rem;">
+          Day {parentDay.data.day} · {parentDay.data.title}
+        </div>
+      )}
+      <h1 style="font-size:clamp(1.5rem,4vw,2.25rem);font-weight:500;letter-spacing:-.02em;line-height:1.2;margin-bottom:.6rem;">
+        {entry.data.title}
+      </h1>
+      <p style="color:var(--muted);font-size:15px;">{entry.data.description}</p>
+    </div>
+
+    <!-- Content -->
+    <article class="prose">
+      <Content />
+    </article>
+
+    <!-- Back -->
+    {parentDay && (
+      <div style="margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border2);">
+        <a href={`/day/${parentDay.data.day}`} class="back-link">
+          ← Back to Day {parentDay.data.day}: {parentDay.data.title}
+        </a>
+      </div>
+    )}
+  </main>
+</Base>
+
+<style>
+.bc-link  { color:var(--muted); transition:color .15s; }
+.bc-link:hover { color:var(--text); }
+.back-link { font-size:13px; color:var(--muted); text-decoration:none; transition:color .15s; }
+.back-link:hover { color:var(--text); }
+
+</style>

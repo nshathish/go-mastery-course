@@ -1,0 +1,199 @@
+---
+day: 3
+title: "Goroutines internals"
+subtitle: "GMP scheduler, stacks, GOMAXPROCS, work stealing, leaks, debugging"
+phase: 1
+concepts: ["GMP model", "goroutine stacks", "GOMAXPROCS", "work stealing", "goroutine leaks", "runtime debugging"]
+---
+
+## The GMP model: G, M, and P
+
+Go's runtime scheduler maps goroutines (G) onto OS threads (M) using logical processors (P). This is the M:N threading model.
+
+```go
+// GOMAXPROCS=2 means 2 Ps, each bound to one M at a time
+//
+// P0: [G1 running] [G2, G3, G4 in local run queue]
+// P1: [G5 running] [G6, G7 in local run queue]
+// Global run queue: [G8, G9, G10 ...]
+//
+// G = goroutine: lightweight, 2KB initial stack
+// M = machine:   real OS thread, kernel schedules these
+// P = processor: scheduling context, holds local run queue
+```
+
+> **Note:** P count controls parallelism, M count is elastic. When a G blocks on a syscall, the runtime unbinds P from M so P can find another M to use — keeping all Ps busy.
+
+---
+
+## Goroutine stacks: growable and shrinkable
+
+Unlike OS threads (1–8 MB fixed stacks), goroutines start tiny and grow on demand.
+
+```go
+// Stack growth: contiguous copy model
+// 1. Detect overflow via "stack guard" pointer at bottom
+// 2. Allocate new, larger stack (typically 2x)
+// 3. Copy all frames over, rewrite all pointers
+// 4. Resume goroutine on new stack
+
+func deepRecursion(n int) int {
+    if n == 0 { return 0 }
+    return deepRecursion(n-1) + 1
+    // stack grows automatically — no overflow
+}
+
+// Initial: 2 KB | Max: 1 GB | OS thread: 1–8 MB fixed
+```
+
+> **Gotcha:** Never hold a raw pointer into another goroutine's stack from outside. When the stack is copied, the pointer becomes invalid.
+
+---
+
+## GOMAXPROCS and the container gotcha
+
+`GOMAXPROCS` sets the number of OS threads that can execute Go code simultaneously. Default = number of CPU cores.
+
+```go
+n := runtime.GOMAXPROCS(0)   // 0 = query without changing
+old := runtime.GOMAXPROCS(4) // set to 4, returns old value
+
+// Container gotcha: Go reads from HOST CPU count, not cgroup limit
+// Container with 0.5 CPU on a 64-core host → GOMAXPROCS=64
+// Result: 64 threads contending for 0.5 CPU → huge context switching
+
+// Fix: automaxprocs reads cgroup quota and sets GOMAXPROCS correctly
+import _ "go.uber.org/automaxprocs"
+```
+
+> **Gotcha:** In Kubernetes or Docker with CPU limits set, always use `automaxprocs`. This single import can 2-3x throughput in containerised services.
+
+---
+
+## Work stealing
+
+When a P runs out of goroutines, it steals half the run queue from another P instead of going idle.
+
+```go
+// Scheduler decision loop per P (simplified):
+// 1. Check local run queue → run a G if one exists
+// 2. Check global run queue (every 61 ticks — starvation prevention)
+// 3. Check network poller for ready I/O goroutines
+// 4. Work steal: pick random P, steal half its run queue
+// 5. If still no work, park the M (give up P)
+
+// Go 1.14+: async preemption via SIGURG
+// Tight CPU loops CAN be preempted — unlike older Go
+
+runtime.Gosched()  // cooperative yield — rarely needed post-1.14
+```
+
+> **Note:** Steals from the *tail* of the victim's queue. The victim keeps its hot, recently-added work. The stealer gets the cold tail end — minimises cache contention.
+
+---
+
+## Goroutine leaks
+
+A leaked goroutine is one that is started but never exits — it sits blocked forever, holding memory and resources.
+
+```go
+// Leak: channel nobody writes to
+func leak() {
+    ch := make(chan int)
+    go func() { v := <-ch; fmt.Println(v) }()
+    // ch goes out of scope — goroutine blocked forever
+}
+
+// Fix: always pass context, select on done
+func noLeak(ctx context.Context) {
+    go func() {
+        for {
+            select {
+            case <-ctx.Done():
+                return  // clean exit
+            default:
+                doWork()
+            }
+        }
+    }()
+}
+
+runtime.NumGoroutine()  // count — rising steadily = leak
+```
+
+> **Gotcha:** The runtime never forcibly terminates a goroutine — only `return`, `panic`, or `runtime.Goexit()` can end one. Every goroutine you start must have a clear exit path.
+
+---
+
+## Runtime debugging
+
+The runtime exposes hooks to observe goroutine behaviour in production without stopping the program.
+
+```go
+// Dump all goroutine stacks
+buf := make([]byte, 1<<20)
+n := runtime.Stack(buf, true)
+fmt.Printf("%s", buf[:n])
+
+// Scheduler tracing:
+// GODEBUG=schedtrace=1000 ./myprogram
+// SCHED 1000ms: gomaxprocs=8 idleprocs=6 threads=10 runqueue=0 [2 0 0 0 0 0 0 0]
+
+// pprof goroutine profile (production-safe)
+import _ "net/http/pprof"
+// GET /debug/pprof/goroutine?debug=2
+
+// goleak in tests
+func TestSomething(t *testing.T) {
+    defer goleak.VerifyNone(t)
+}
+```
+
+> **Good:** The pprof goroutine endpoint is the most useful production debugging tool for concurrency issues. Enable it on every service — just ensure the port isn't publicly reachable.
+
+---
+
+## Tasks
+
+### 1. Goroutine pool with work stealing simulation `medium`
+
+Build a worker pool that distributes jobs across N goroutines. Each worker has its own local queue. When idle, it steals from others — mirroring Go's own scheduler internals.
+
+**Concepts:** GMP model · goroutine leaks · GOMAXPROCS
+
+- Create a `WorkerPool` with N workers, each running in its own goroutine
+- Each worker drains its local channel; when empty it tries to steal from a random peer
+- Use `context.Context` for shutdown — all goroutines must exit cleanly on cancel
+- Add a `runtime.NumGoroutine()` assertion in a test: before pool start, after start, after cancel
+- Verify with `goleak.VerifyNone(t)` that no goroutines leak after shutdown
+- Print `GOMAXPROCS` at startup; document what `automaxprocs` would change
+
+---
+
+### 2. Stack depth profiler `medium`
+
+Write a tool that spawns goroutines with varying recursive depths, captures their stacks via `runtime.Stack`, parses the output, and reports the deepest call chains.
+
+**Concepts:** goroutine stacks · runtime debugging
+
+- Spawn 20 goroutines each recursing to a different depth (1–20)
+- Use `runtime.Stack(buf, true)` to capture all stacks mid-execution
+- Parse the output to extract goroutine IDs and their current stack depth
+- Report: goroutine ID, depth, and top frame function name
+- Demonstrate stack growth is automatic — no explicit size hint needed
+- Add a `GODEBUG=schedtrace=500` run and document what each field means
+
+---
+
+### 3. Leak detector middleware `complex`
+
+Build an HTTP middleware that tracks goroutine count before and after each request, alerts on requests that leak goroutines, and exposes a `/debug/goroutines` endpoint with full stack traces.
+
+**Concepts:** goroutine leaks · runtime debugging · GOMAXPROCS · goroutine stacks
+
+- Middleware records `runtime.NumGoroutine()` before `ServeHTTP` and after
+- If count after > count before + threshold, log a warning with the request path and delta
+- Expose `GET /debug/goroutines` returning `runtime.Stack` output as plain text
+- Expose `GET /debug/stats` returning `GOMAXPROCS`, goroutine count, and thread count as JSON
+- Write a test that intentionally leaks goroutines in a handler and asserts the middleware detects it
+- Use `goleak.VerifyNone(t)` to confirm the test itself is clean after the leaky handler is fixed

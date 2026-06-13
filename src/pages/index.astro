@@ -1,0 +1,86 @@
+---
+import Base from '../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+
+const allDays = await getCollection('days');
+const builtDayNums = new Set(allDays.map(d => d.data.day));
+
+const phases = [
+  { id: 1, name: "Intermediate foundations",        days: [1,  14] },
+  { id: 2, name: "Advanced concurrency & internals",days: [15, 28] },
+  { id: 3, name: "Systems & performance",           days: [29, 42] },
+  { id: 4, name: "Expert patterns & architecture",  days: [43, 56] },
+  { id: 5, name: "Capstone & mastery",              days: [57, 60] },
+];
+
+const phaseColors: Record<number, string> = {
+  1: '#007a99', 2: '#534ab7', 3: '#0f6e56', 4: '#993c1d', 5: '#854f0b',
+};
+---
+<Base title="Schedule">
+  <main style="max-width:1100px;margin:0 auto;padding:3rem 1.5rem;">
+
+    <div style="margin-bottom:3.5rem;">
+      <div style="font-family:var(--mono);font-size:12px;color:var(--go-blue);letter-spacing:.08em;text-transform:uppercase;margin-bottom:.75rem;">60-day program</div>
+      <h1 style="font-size:clamp(2rem,5vw,3.25rem);font-weight:500;line-height:1.15;letter-spacing:-.02em;margin-bottom:1rem;">
+        Go mastery<br/>
+        <span style="color:var(--muted);font-weight:400;">from intermediate to expert</span>
+      </h1>
+      <p style="color:var(--muted);max-width:520px;font-size:15px;line-height:1.7;">
+        1–2 hours a day, five phases, one concrete coding task per day. Click any built-out day to start.
+      </p>
+      <div style="display:flex;gap:1.5rem;margin-top:1.25rem;flex-wrap:wrap;">
+        <div style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px;">
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--go-blue);display:inline-block;"></span>Built out
+        </div>
+        <div style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px;">
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--border);display:inline-block;"></span>Coming soon
+        </div>
+      </div>
+    </div>
+
+    {phases.map(phase => {
+      const [start, end] = phase.days;
+      const nums = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+      const color = phaseColors[phase.id];
+      return (
+        <section style="margin-bottom:3rem;">
+          <div style="display:flex;align-items:baseline;gap:1rem;margin-bottom:1.25rem;flex-wrap:wrap;">
+            <span style={`font-family:var(--mono);font-size:11px;font-weight:500;color:${color};letter-spacing:.06em;text-transform:uppercase;`}>Phase {phase.id}</span>
+            <h2 style="font-size:16px;font-weight:500;">{phase.name}</h2>
+            <span style="font-size:12px;color:var(--subtle);margin-left:auto;font-family:var(--mono);">Days {start}–{end}</span>
+          </div>
+          <div style={`border-left:2px solid ${color}33;padding-left:1.25rem;`}>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:8px;">
+              {nums.map(n => {
+                const built = builtDayNums.has(n);
+                const day = allDays.find(d => d.data.day === n);
+                return (
+                  <a
+                    href={built ? `/day/${n}` : undefined}
+                    class={built ? 'day-card built' : 'day-card'}
+                  >
+                    <div class="day-num" style={built ? `color:${color}` : ''}>Day {n}</div>
+                    <div class="day-title">{day ? day.data.title : '—'}</div>
+                    {day && (
+                      <div class="day-sub">{day.data.concepts.slice(0,2).join(', ')}</div>
+                    )}
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      );
+    })}
+  </main>
+</Base>
+
+<style>
+.day-card { display:block; background:var(--surface); border:1px solid var(--border2); border-radius:var(--radius); padding:12px 14px; opacity:.4; text-decoration:none; }
+.day-card.built { opacity:1; cursor:pointer; border-color:var(--border); transition:border-color .15s,background .15s; }
+.day-card.built:hover { background:var(--surface2); border-color:var(--go-blue); }
+.day-num  { font-family:var(--mono); font-size:10px; font-weight:500; color:var(--subtle); margin-bottom:4px; letter-spacing:.04em; }
+.day-title{ font-size:13px; font-weight:500; color:var(--text); margin-bottom:3px; line-height:1.4; }
+.day-sub  { font-size:11px; color:var(--subtle); line-height:1.4; }
+</style>

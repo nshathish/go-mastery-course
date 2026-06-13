@@ -1,0 +1,185 @@
+---
+day: 1
+title: "Interfaces & composition"
+subtitle: "Implicit satisfaction, method sets, embedding, nil gotcha"
+phase: 1
+concepts: ["implicit interfaces", "method sets", "interface composition", "struct embedding", "nil interface gotcha"]
+---
+
+## Interfaces are implicit
+
+No `implements` keyword — a type satisfies an interface simply by having the right methods.
+
+```go
+type Stringer interface {
+    String() string
+}
+
+type User struct {
+    Name  string
+    Email string
+}
+
+// User satisfies Stringer — no declaration needed
+func (u User) String() string {
+    return u.Name + " <" + u.Email + ">"
+}
+```
+
+> **Note:** This is called *structural typing*. The interface and the type don't need to know about each other — any package can define an interface that any other package's type satisfies.
+
+---
+
+## Method sets
+
+Whether you use a value receiver or pointer receiver matters for interface satisfaction.
+
+```go
+type Writer interface {
+    Write([]byte) (int, error)
+}
+
+type Buffer struct { data []byte }
+
+// pointer receiver — only *Buffer satisfies Writer
+func (b *Buffer) Write(p []byte) (int, error) {
+    b.data = append(b.data, p...)
+    return len(p), nil
+}
+
+var w Writer = &Buffer{}  // ok
+var w Writer = Buffer{}   // compile error!
+```
+
+> **Gotcha:** If your method mutates the receiver, use a pointer receiver. If it only reads, a value receiver is fine. Be consistent within a type.
+
+---
+
+## Interface composition
+
+Build larger interfaces from smaller ones — Go's stdlib is full of this pattern.
+
+```go
+type Reader interface {
+    Read(p []byte) (int, error)
+}
+
+type Writer interface {
+    Write(p []byte) (int, error)
+}
+
+// Compose them — mirrors io.ReadWriter from stdlib
+type ReadWriter interface {
+    Reader
+    Writer
+}
+
+// Accept the smallest interface you need
+func Copy(dst Writer, src Reader) error { /* ... */ }
+```
+
+> **Note:** Accept interfaces, return structs. Functions should accept the narrowest interface they need, making them easier to test and reuse. Return concrete types so callers know exactly what they get.
+
+---
+
+## Struct embedding
+
+Embedding promotes methods from an inner type — Go's answer to inheritance.
+
+```go
+type Animal struct { Name string }
+
+func (a Animal) Describe() string {
+    return "I am " + a.Name
+}
+
+type Dog struct {
+    Animal        // embedded — no field name
+    Breed string
+}
+
+d := Dog{Animal: Animal{Name: "Rex"}, Breed: "Lab"}
+d.Describe()  // promoted from Animal — "I am Rex"
+d.Name        // also promoted
+```
+
+> **Gotcha:** Embedding ≠ inheritance. `Dog` doesn't "is-a" `Animal`. You can't pass a `Dog` where an `Animal` is expected unless `Animal` is an interface. The promotion is purely syntactic convenience.
+
+---
+
+## The nil interface gotcha
+
+A nil pointer wrapped in an interface is **not** nil — one of Go's most common surprises.
+
+```go
+type MyError struct{ msg string }
+func (e *MyError) Error() string { return e.msg }
+
+func getError(fail bool) error {
+    var err *MyError  // typed nil pointer
+    if fail {
+        err = &MyError{"oops"}
+    }
+    return err  // WRONG: returns non-nil interface!
+}
+
+err := getError(false)
+err == nil  // false — surprise!
+
+// Fix: return nil directly
+func getError(fail bool) error {
+    if fail {
+        return &MyError{"oops"}
+    }
+    return nil  // correct
+}
+```
+
+> **Note:** Never return a typed nil pointer as an interface. Return untyped `nil` directly, or return the interface type throughout.
+
+---
+
+## Tasks
+
+### 1. Notification dispatcher `medium`
+
+Build a notification system that can send messages over multiple channels (email, SMS, Slack). A dispatcher accepts any notifier, and a multi-notifier fans out to all of them at once.
+
+**Concepts:** implicit interfaces · interface composition · struct embedding
+
+- Define a `Notifier` interface with `Send(to, subject, body string) error`
+- Implement `EmailNotifier`, `SMSNotifier`, `SlackNotifier` — each satisfies `Notifier` implicitly
+- Create a `MultiNotifier` struct that embeds a slice of `Notifier` and also satisfies the interface
+- Add a `LoggedNotifier` that embeds any `Notifier` and logs each send without modifying the originals
+- Write a `Dispatch(n Notifier, ...)` function that accepts the narrowest interface it needs
+- `SMSNotifier` should use a pointer receiver; verify that passing a value (not pointer) causes a compile error
+
+---
+
+### 2. Pluggable storage engine `medium`
+
+Design a key-value store where the storage backend is swappable. Support an in-memory backend and an append-only log backend, with a composed interface for stores that support snapshots.
+
+**Concepts:** interface composition · method sets · nil interface gotcha
+
+- Define small interfaces: `Getter`, `Setter`, `Deleter` — compose them into a `Store` interface
+- Add a separate `Snapshotter` interface and compose it with `Store` into `PersistentStore`
+- Implement `MemStore` (satisfies `Store`) and `LogStore` (satisfies `PersistentStore`)
+- Write a `NewStore(persistent bool) Store` factory — deliberately trigger the nil interface gotcha, then fix it
+- All mutating methods must use pointer receivers; verify with: `var _ Store = (*MemStore)(nil)`
+- Write a `CachedStore` that embeds a `Store` and adds an in-memory read cache
+
+---
+
+### 3. Middleware pipeline `complex`
+
+Build a minimal HTTP-inspired handler system with a middleware chain. Each middleware wraps the next handler — composing interfaces and embedding to build powerful behaviour without inheritance.
+
+**Concepts:** implicit interfaces · interface composition · struct embedding · method sets · nil interface gotcha
+
+- Define `Handler` interface with `ServeHTTP(w ResponseWriter, r *Request)` using your own minimal types
+- Define `ResponseWriter` interface composed from `Writer` and `HeaderWriter` smaller interfaces
+- Implement `LoggingMiddleware` and `AuthMiddleware` — each embeds the next `Handler` and wraps `ServeHTTP`
+- Build a `Chain(h Handler, middlewares ...func(Handler) Handler) Handler` that composes the chain
+- `AuthMiddleware` should return a typed nil `*AuthMiddleware` on config error — demonstrate the nil gotcha then fix it
+- Add a `RecordingResponseWriter` that embeds `ResponseWriter` and records the status code — use pointer receiver so mutations stick
